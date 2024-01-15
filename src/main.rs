@@ -1,5 +1,6 @@
 // start: -- Modules
 
+use futures::StreamExt;
 use tokio::io::AsyncWriteExt;
 
 use violetta_rs::{
@@ -8,16 +9,15 @@ use violetta_rs::{
         MODEL,
         DEFAULT_SYSTEM_MOCK,
     },
-    generation::run_chat_request,
 };
 
 use ollama_rs::{
     Ollama,
     generation::chat::{
-            ChatMessage,
-            MessageRole,
-            request::ChatMessageRequest,
-        },
+        ChatMessage,
+        ChatMessageResponseStream,
+        request::ChatMessageRequest,
+    }
 };
 
 // end: -- Modules
@@ -31,38 +31,74 @@ async fn main() -> Result<()> {
     let mut stdout = tokio::io::stdout();
     let stdin = std::io::stdin();
 
-    let mut thread_messages: Vec<ChatMessage> = vec![];
+    let mut messages: Vec<ChatMessage> = vec![];
+
+    let system_message =
+        ChatMessage::assistant(DEFAULT_SYSTEM_MOCK.to_string());
+    messages.push(system_message);
 
     loop {
-        stdout.write_all(b"\n").await?;
+        stdout.write_all(b"\n\nUser:\n").await?;
         stdout.flush().await?;
 
         let mut input = String::new();
-        stdin.read_line(&mut input)?;   
+        stdin.read_line(&mut input)?;
+
+        let user_message = ChatMessage::user(input.to_string());
+        messages.push(user_message);
 
         let input = input.trim_end();
         if input.eq_ignore_ascii_case("bye bye") {
+            let mut stream: ChatMessageResponseStream = ollama
+            .send_chat_messages_stream(ChatMessageRequest::new(
+                model.to_owned(),
+                messages.clone(),
+            ))
+            .await?;
+        
+            stdout.write_all(b"\nVioletta:").await?;
+            stdout.flush().await?;
+
+            let mut response = String::new();
+            while let Some(Ok(res)) = stream.next().await {
+                if let Some(assistant_message) = res.message {
+                    stdout
+                        .write_all(assistant_message.content.as_bytes())
+                        .await?;
+                    stdout.flush().await?;
+                    response += assistant_message.content.as_str();
+                }
+            }
+            messages.push(ChatMessage::assistant(response));
+
+            stdout.write_all(b"\n").await?;
+            stdout.flush().await?;
+
             break;
         }
 
-        let system_message =
-            ChatMessage::new(MessageRole::System, DEFAULT_SYSTEM_MOCK.to_string());
+        let mut stream: ChatMessageResponseStream = ollama
+            .send_chat_messages_stream(ChatMessageRequest::new(
+                model.to_owned(),
+                messages.clone(),
+            ))
+            .await?;
+        
+        
+        stdout.write_all(b"\nVioletta:").await?;
+        stdout.flush().await?;
 
-        thread_messages.push(system_message);
-
-        let input_message = ChatMessage::new(MessageRole::User, input.to_string());
-
-        thread_messages.push(input_message);
-
-        let chat_request =
-            ChatMessageRequest::new(model.to_owned(), thread_messages.clone());
-
-        let message_content = run_chat_request(&ollama, chat_request).await?;
-
-        if let Some(content) = message_content {
-            let assistant_message = ChatMessage::new(MessageRole::Assistant, content);
-            thread_messages.push(assistant_message);
+        let mut response = String::new();
+        while let Some(Ok(res)) = stream.next().await {
+            if let Some(assistant_message) = res.message {
+                stdout
+                    .write_all(assistant_message.content.as_bytes())
+                    .await?;
+                stdout.flush().await?;
+                response += assistant_message.content.as_str();
+            }
         }
+        messages.push(ChatMessage::assistant(response));
     }
 
     Ok(())
