@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
     let mut messages: Vec<ChatMessage> = vec![];
 
     let system_message =
-        ChatMessage::assistant(DEFAULT_SYSTEM_MOCK.to_string());
+        ChatMessage::user(DEFAULT_SYSTEM_MOCK.to_string());
     messages.push(system_message);
 
     loop {
